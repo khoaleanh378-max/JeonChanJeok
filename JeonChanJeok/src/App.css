@@ -637,6 +637,82 @@ input:focus {
   }
 }
 
+.footer-bar {
+  background: #111827;
+  border-top: 1px solid #1f2937;
+  padding: 48px 0 24px;
+  margin-top: 48px;
+}
+
+.footer-inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.footer-columns {
+  display: flex;
+  gap: 40px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+}
+
+.footer-column {
+  flex: 1;
+  min-width: 120px;
+}
+
+.footer-subscribe {
+  min-width: 180px;
+}
+
+.footer-column-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #F9FAFB;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+  font-family: 'Nunito Sans', monospace;
+}
+
+.footer-link {
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.footer-link:hover {
+  color: #F59E0B;
+}
+
+.footer-input {
+  width: 100%;
+  background: #1F2937;
+  border: 1px solid #374151;
+  color: #F9FAFB;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.footer-legal {
+  border-top: 1px solid #1f2937;
+  padding-top: 20px;
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .footer-columns {
+    flex-direction: column;
+    gap: 24px;
+  }
+}
+
 @media (max-width: 768px) {
   .site-container {
     padding: 0 16px 32px;
@@ -644,3 +720,8 @@ input:focus {
 }
 
 
+
+/* Spinner animation added for backend loading states */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

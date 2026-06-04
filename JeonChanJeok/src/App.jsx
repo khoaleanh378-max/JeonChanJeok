@@ -1,16 +1,24 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
-import { BOOKS_DATA, USERS_DATA, CATEGORIES, COVER_COLORS } from "./data"; //Import database
+import { CATEGORIES, COVER_COLORS } from "./data";
+import {
+  apiLogin, apiRegister,
+  apiGetAllBooks, apiGetBookDetail, apiSearchBooks, apiGetBooksByCategory,
+  apiGetCart, apiAddToCart, apiRemoveFromCart, apiIncreaseQty, apiDecreaseQty,
+  apiGetOrders, apiCreateOrder, apiDeleteOrder,
+  apiGetProfile,
+} from "./api";
 
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
 function BookCover({ book, size = "md" }) {
-  const idx = parseInt(book.book_id.replace("B_", "")) % COVER_COLORS.length;
+  const idx = parseInt((book.book_id || "B_0").replace("B_", "")) % COVER_COLORS.length;
   const [bg, accent] = COVER_COLORS[idx];
   const sizes = { sm: { w: 72, h: 100 }, md: { w: 112, h: 160 }, lg: { w: 196, h: 280 } };
   const { w, h } = sizes[size];
-  
   return (
     <div style={{
-      width: w, height: h, background: `linear-gradient(135deg, ${bg} 0%, ${accent}33 100%)`,
+      width: w, height: h,
+      background: `linear-gradient(135deg, ${bg} 0%, ${accent}33 100%)`,
       borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", padding: 8, flexShrink: 0, border: `1px solid ${accent}44`
     }}>
@@ -22,55 +30,167 @@ function BookCover({ book, size = "md" }) {
   );
 }
 
-function formatPrice(p) { return p.toLocaleString("vi-VN") + "đ"; }
+function formatPrice(p) { return (p || 0).toLocaleString("vi-VN") + "đ"; }
+
+// ─── LOADING SPINNER ─────────────────────────────────────────────────────────
+function Spinner() {
+  return (
+    <div style={{ display: "flex", justifyContent: "center", padding: 60 }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: "50%",
+        border: "3px solid #374151", borderTopColor: "#F59E0B",
+        animation: "spin 0.7s linear infinite"
+      }} />
+    </div>
+  );
+}
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [page, setPage] = useState("home");
-  const [currentUser, setCurrentUser] = useState(null);
-  const [cart, setCart] = useState([]);
+  const [page, setPage]               = useState("home");
+  const [currentUser, setCurrentUser] = useState(null);   // { id, name, role, token }
+  const [cart, setCart]               = useState([]);      // cart items from backend chi_tiet[]
   const [selectedBook, setSelectedBook] = useState(null);
-  const [orders, setOrders] = useState([]);
-  const [search, setSearch] = useState("");
-  const [filterCat, setFilterCat] = useState("Tất cả");
-  const [toast, setToast] = useState(null);
+  const [orders, setOrders]           = useState([]);
+  const [books, setBooks]             = useState([]);
+  const [booksLoading, setBooksLoading] = useState(true);
+  const [search, setSearch]           = useState("");
+  const [filterCat, setFilterCat]     = useState("Tất cả");
+  const [toast, setToast]             = useState(null);
 
+  // ── Toast ──────────────────────────────────────────────────
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2500);
   };
 
-  const addToCart = (book) => {
-    setCart(prev => {
-      const ex = prev.find(i => i.book_id === book.book_id);
-      if (ex) return prev.map(i => i.book_id === book.book_id ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, { ...book, qty: 1 }];
-    });
-    showToast(`Đã thêm "${book.title}" vào giỏ hàng`);
+  // ── Token helper ──────────────────────────────────────────
+  const token = currentUser?.token || null;
+
+  // ── Load books on mount ───────────────────────────────────
+  useEffect(() => {
+    fetchBooks();
+  }, []);
+
+  const fetchBooks = async () => {
+    setBooksLoading(true);
+    try {
+      const data = await apiGetAllBooks();
+      setBooks(data);
+    } catch (err) {
+      showToast("Không thể tải danh sách sách: " + err.message, "error");
+    } finally {
+      setBooksLoading(false);
+    }
   };
 
-  const updateQty = (book_id, delta) => {
-    setCart(prev => prev.map(i => i.book_id === book_id ? { ...i, qty: Math.max(1, i.qty + delta) } : i));
+  // ── Load cart when user logs in ───────────────────────────
+  useEffect(() => {
+    if (!currentUser) { setCart([]); return; }
+    loadCart(currentUser.token);
+    loadOrders(currentUser.token);
+  }, [currentUser]);
+
+  const loadCart = async (tk) => {
+    try {
+      const data = await apiGetCart(tk);
+      // Backend returns { chi_tiet: [{book_id, quantity, price}] }
+      // We also need book title/author for display — merge with books state
+      setCart(data.chi_tiet || []);
+    } catch {
+      setCart([]);
+    }
   };
 
-  const removeFromCart = (book_id) => {
-    setCart(prev => prev.filter(i => i.book_id !== book_id));
+  const loadOrders = async (tk) => {
+    try {
+      const data = await apiGetOrders(tk);
+      setOrders(Array.isArray(data) ? data : []);
+    } catch {
+      setOrders([]);
+    }
   };
 
-  const checkout = () => {
-    if (!currentUser) { setPage("signin"); return; }
-    const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
-    const newOrder = {
-      _id: orders.length + 1,
-      userId: currentUser.id,
-      ngay_mua: new Date().toISOString().split("T")[0],
-      tong_tien: subtotal,
-      chi_tiet: cart.map(i => ({ ma_sach: i.book_id, so_luong: i.qty, gia_tien: i.price }))
-    };
-    setOrders(prev => [...prev, newOrder]);
-    setCart([]);
-    showToast("Đặt hàng thành công!");
-    setPage("home");
+  // ── Filtered books (client-side after fetch) ──────────────
+  // Search/category filtering: re-fetch from API when possible,
+  // but also support fast local filter for instant UX.
+  const filteredBooks = books.filter(b => {
+    const matchCat = filterCat === "Tất cả" || b.category === filterCat;
+    const kw = search.toLowerCase();
+    const matchSearch = !kw ||
+      b.title.toLowerCase().includes(kw) ||
+      b.author.toLowerCase().includes(kw);
+    return matchCat && matchSearch;
+  });
+
+  // ── Cart operations ───────────────────────────────────────
+  const addToCart = async (book) => {
+    if (!currentUser) {
+      showToast("Vui lòng đăng nhập để thêm vào giỏ hàng", "error");
+      navigate("signin");
+      return;
+    }
+    try {
+      const data = await apiAddToCart(book.book_id, 1, token);
+      setCart(data.detail?.chi_tiet || []);
+      showToast(`Đã thêm "${book.title}" vào giỏ hàng`);
+    } catch (err) {
+      showToast("Lỗi thêm vào giỏ: " + err.message, "error");
+    }
+  };
+
+  const updateQty = async (book_id, delta) => {
+    if (!currentUser) return;
+    try {
+      let data;
+      if (delta > 0) {
+        data = await apiIncreaseQty(book_id, token);
+      } else {
+        data = await apiDecreaseQty(book_id, token);
+      }
+      setCart(data.order?.chi_tiet || []);
+    } catch (err) {
+      showToast("Lỗi cập nhật số lượng: " + err.message, "error");
+    }
+  };
+
+  const removeFromCart = async (book_id) => {
+    if (!currentUser) return;
+    try {
+      const data = await apiRemoveFromCart(book_id, token);
+      setCart(data.detail?.chi_tiet || []);
+      showToast("Đã xóa sản phẩm khỏi giỏ hàng");
+    } catch (err) {
+      showToast("Lỗi xóa sản phẩm: " + err.message, "error");
+    }
+  };
+
+  // ── Checkout ──────────────────────────────────────────────
+  const checkout = async () => {
+    if (!currentUser) { navigate("signin"); return; }
+    const subtotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+    const vat = Math.round(subtotal * 0.08);
+    const total = subtotal + vat;
+    try {
+      await apiCreateOrder(total, token);
+      // Clear cart by removing each item (or refetch)
+      setCart([]);
+      await loadOrders(token);
+      showToast("Đặt hàng thành công!");
+      navigate("home");
+    } catch (err) {
+      showToast("Lỗi thanh toán: " + err.message, "error");
+    }
+  };
+
+  const deleteOrder = async (orderId) => {
+    try {
+      await apiDeleteOrder(orderId, token);
+      await loadOrders(token);
+      showToast("Đã xóa đơn hàng");
+    } catch (err) {
+      showToast("Lỗi xóa đơn: " + err.message, "error");
+    }
   };
 
   const navigate = (p, book = null) => {
@@ -79,13 +199,13 @@ export default function App() {
     window.scrollTo(0, 0);
   };
 
-  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  // Cart count based on backend chi_tiet quantities
+  const cartCount = cart.reduce((s, i) => s + (i.quantity || 0), 0);
 
-  const filteredBooks = BOOKS_DATA.filter(b => {
-    const matchCat = filterCat === "Tất cả" || b.category === filterCat;
-    const matchSearch = b.title.toLowerCase().includes(search.toLowerCase()) ||
-      b.author.toLowerCase().includes(search.toLowerCase());
-    return matchCat && matchSearch;
+  // Enrich cart items with book metadata for display
+  const enrichedCart = cart.map(item => {
+    const bookInfo = books.find(b => b.book_id === item.book_id) || {};
+    return { ...item, title: bookInfo.title || item.book_id, author: bookInfo.author || "" };
   });
 
   return (
@@ -97,17 +217,44 @@ export default function App() {
         </div>
       )}
 
-      <Navbar currentUser={currentUser} cartCount={cartCount} navigate={navigate}
+      <Navbar
+        currentUser={currentUser} cartCount={cartCount} navigate={navigate}
         onLogout={() => { setCurrentUser(null); navigate("home"); showToast("Đã đăng xuất"); }}
-        search={search} setSearch={setSearch} filterCat={filterCat} setFilterCat={setFilterCat} />
+        search={search} setSearch={setSearch}
+        filterCat={filterCat} setFilterCat={setFilterCat}
+      />
 
       <main className="site-container">
-        {page === "home" && <HomePage books={filteredBooks} navigate={navigate} addToCart={addToCart} filterCat={filterCat} setFilterCat={setFilterCat} />}
-        {page === "product" && selectedBook && <ProductPage book={selectedBook} navigate={navigate} addToCart={addToCart} />}
-        {page === "signin" && <SignIn navigate={navigate} users={USERS_DATA} setCurrentUser={setCurrentUser} showToast={showToast} />}
-        {page === "signup" && <SignUp navigate={navigate} showToast={showToast} />}
-        {page === "account" && <AccountPage currentUser={currentUser} navigate={navigate} orders={orders} showToast={showToast} />}
-        {page === "cart" && <CartPage cart={cart} updateQty={updateQty} removeFromCart={removeFromCart} checkout={checkout} navigate={navigate} currentUser={currentUser} />}
+        {page === "home" && (
+          <HomePage
+            books={filteredBooks} loading={booksLoading}
+            navigate={navigate} addToCart={addToCart}
+            filterCat={filterCat} setFilterCat={setFilterCat}
+          />
+        )}
+        {page === "product" && selectedBook && (
+          <ProductPage book={selectedBook} navigate={navigate} addToCart={addToCart} />
+        )}
+        {page === "signin" && (
+          <SignIn navigate={navigate} setCurrentUser={setCurrentUser} showToast={showToast} />
+        )}
+        {page === "signup" && (
+          <SignUp navigate={navigate} showToast={showToast} />
+        )}
+        {page === "account" && (
+          <AccountPage
+            currentUser={currentUser} navigate={navigate}
+            orders={orders} deleteOrder={deleteOrder}
+            showToast={showToast} token={token}
+          />
+        )}
+        {page === "cart" && (
+          <CartPage
+            cart={enrichedCart} updateQty={updateQty}
+            removeFromCart={removeFromCart} checkout={checkout}
+            navigate={navigate} currentUser={currentUser}
+          />
+        )}
       </main>
 
       <Footer />
@@ -118,11 +265,15 @@ export default function App() {
 // ─── NAVBAR ──────────────────────────────────────────────────────────────────
 function Navbar({ currentUser, cartCount, navigate, onLogout, search, setSearch, filterCat, setFilterCat }) {
   const [dropdown, setDropdown] = useState(false);
-  const [catOpen, setCatOpen] = useState(false);
+  const [catOpen, setCatOpen]   = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) { setDropdown(false); setCatOpen(false); } };
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setDropdown(false); setCatOpen(false);
+      }
+    };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
@@ -143,13 +294,13 @@ function Navbar({ currentUser, cartCount, navigate, onLogout, search, setSearch,
                 <>
                   <div className="nav-dropdown-header">{currentUser.name}</div>
                   <MenuItem label="Quản lý tài khoản" onClick={() => { navigate("account"); setDropdown(false); }} />
-                  <MenuItem label="Quản lý giỏ hàng" onClick={() => { navigate("cart"); setDropdown(false); }} />
-                  <MenuItem label="Đăng xuất" onClick={() => { onLogout(); setDropdown(false); }} accent />
+                  <MenuItem label="Quản lý giỏ hàng"  onClick={() => { navigate("cart");    setDropdown(false); }} />
+                  <MenuItem label="Đăng xuất"          onClick={() => { onLogout();          setDropdown(false); }} accent />
                 </>
               ) : (
                 <>
                   <MenuItem label="Đăng nhập" onClick={() => { navigate("signin"); setDropdown(false); }} accent />
-                  <MenuItem label="Đăng ký" onClick={() => { navigate("signup"); setDropdown(false); }} />
+                  <MenuItem label="Đăng ký"   onClick={() => { navigate("signup"); setDropdown(false); }} />
                 </>
               )}
             </div>
@@ -166,7 +317,8 @@ function Navbar({ currentUser, cartCount, navigate, onLogout, search, setSearch,
           {catOpen && (
             <div className="nav-dropdown nav-dropdown-left">
               {CATEGORIES.map(cat => (
-                <div key={cat} onClick={() => { setFilterCat(cat); setCatOpen(false); navigate("home"); }}
+                <div key={cat}
+                  onClick={() => { setFilterCat(cat); setCatOpen(false); navigate("home"); }}
                   className={filterCat === cat ? "nav-dropdown-item active" : "nav-dropdown-item"}>
                   {cat}
                 </div>
@@ -175,7 +327,8 @@ function Navbar({ currentUser, cartCount, navigate, onLogout, search, setSearch,
           )}
         </div>
 
-        <input value={search} onChange={e => setSearch(e.target.value)}
+        <input
+          value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Tìm kiếm tên sách, tác giả hoặc từ khóa"
           className="search-input"
           onKeyDown={e => e.key === "Enter" && navigate("home")}
@@ -183,9 +336,7 @@ function Navbar({ currentUser, cartCount, navigate, onLogout, search, setSearch,
 
         <div onClick={() => navigate("cart")} className="nav-cart">
           <span className="icon-button">🛒</span>
-          {cartCount > 0 && (
-            <span className="nav-badge">{cartCount}</span>
-          )}
+          {cartCount > 0 && <span className="nav-badge">{cartCount}</span>}
         </div>
       </div>
     </nav>
@@ -208,7 +359,7 @@ function MenuItem({ label, onClick, accent }) {
 }
 
 // ─── HOME PAGE ───────────────────────────────────────────────────────────────
-function HomePage({ books, navigate, addToCart, filterCat }) {
+function HomePage({ books, loading, navigate, addToCart }) {
   const banchay = books.slice(0, 4);
   const xuhuong = books.slice(2, 6);
   const moitinh = books.slice(4, 8);
@@ -224,13 +375,13 @@ function HomePage({ books, navigate, addToCart, filterCat }) {
         border: "1px solid #1E3A8A", position: "relative"
       }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace", fontSize: 11, color: "#F59E0B", letterSpacing: 3, marginBottom: 8 }}>COMBO ĐẶC BIỆT</div>
-          <div style={{ fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace", fontSize: 52, fontWeight: 900, color: "#fff", lineHeight: 1, marginBottom: 8 }}>-15%</div>
+          <div style={{ fontFamily: "'Nunito Sans','Noto Sans Mono',monospace", fontSize: 11, color: "#F59E0B", letterSpacing: 3, marginBottom: 8 }}>COMBO ĐẶC BIỆT</div>
+          <div style={{ fontFamily: "'Nunito Sans','Noto Sans Mono',monospace", fontSize: 52, fontWeight: 900, color: "#fff", lineHeight: 1, marginBottom: 8 }}>-15%</div>
           <div style={{ color: "#B4BCC4", fontSize: 16, marginBottom: 24 }}>Kèm chữ ký tác giả Nguyễn Nhật Ánh</div>
           <button className="btn-primary" onClick={() => navigate("home")}>Khám phá ngay →</button>
         </div>
         <div style={{ display: "flex", gap: -20, position: "relative" }}>
-          {BOOKS_DATA.filter(b => b.author === "Nguyễn Nhật Ánh").map((b, i) => (
+          {books.filter(b => b.author === "Nguyễn Nhật Ánh").map((b, i) => (
             <div key={b.book_id} style={{ transform: `rotate(${(i - 1) * 8}deg) translateY(${i % 2 ? -10 : 0}px)`, zIndex: i }}>
               <BookCover book={b} size="md" />
             </div>
@@ -238,28 +389,35 @@ function HomePage({ books, navigate, addToCart, filterCat }) {
         </div>
       </div>
 
-      {/* Book Sections */}
-      {[
-        { title: "Bán chạy", books: banchay },
-        { title: "Xu hướng", books: xuhuong },
-        { title: "Mới tinh", books: moitinh },
-        { title: "Tuổi trẻ", books: tuoitre },
-      ].map(section => (
-        <BookSection key={section.title} title={section.title} books={section.books}
-          navigate={navigate} addToCart={addToCart} />
-      ))}
+      {loading ? <Spinner /> : (
+        books.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 60, color: "#6b7280" }}>
+            Không tìm thấy sách nào
+          </div>
+        ) : (
+          [
+            { title: "Bán chạy", books: banchay },
+            { title: "Xu hướng", books: xuhuong },
+            { title: "Mới tinh", books: moitinh },
+            { title: "Tuổi trẻ", books: tuoitre },
+          ].map(section => (
+            <BookSection key={section.title} title={section.title} books={section.books}
+              navigate={navigate} addToCart={addToCart} />
+          ))
+        )
+      )}
     </div>
   );
 }
 
 function BookSection({ title, books, navigate, addToCart }) {
+  if (!books || books.length === 0) return null;
   return (
     <div className="book-section">
       <div className="book-section-header">
-        <div className="section-label">
-          {title}
-        </div>
-        <button className="section-button" onMouseEnter={e => e.target.style.background = "#E5E7EB"}
+        <div className="section-label">{title}</div>
+        <button className="section-button"
+          onMouseEnter={e => e.target.style.background = "#E5E7EB"}
           onMouseLeave={e => e.target.style.background = "#F3F4F6"}>
           →
         </button>
@@ -279,7 +437,8 @@ function BookCard({ book, navigate, addToCart }) {
     <div className="book-card" style={{
       background: "#1F2937", border: "1px solid #374151", borderRadius: 10,
       padding: 16, minWidth: 160, maxWidth: 160, cursor: "pointer",
-      boxShadow: "0 4px 16px #0003", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8,
+      boxShadow: "0 4px 16px #0003", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", gap: 8,
       position: "relative", overflow: "hidden"
     }}>
       <div onClick={() => navigate("product", book)} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
@@ -288,7 +447,7 @@ function BookCard({ book, navigate, addToCart }) {
           {book.title}
         </div>
         <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4, marginBottom: 8, textAlign: "center", width: "100%" }}>{book.author}</div>
-        <div style={{ color: "#F59E0B", fontWeight: 700, fontSize: 15, fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace" }}>
+        <div style={{ color: "#F59E0B", fontWeight: 700, fontSize: 15, fontFamily: "'Nunito Sans','Noto Sans Mono',monospace" }}>
           {formatPrice(book.price)}
         </div>
       </div>
@@ -315,27 +474,23 @@ function ProductPage({ book, navigate, addToCart }) {
             <span>Thể loại: <strong style={{ color: "#F9FAFB" }}>{book.category}</strong></span>
             <span>Còn: <strong style={{ color: "#F59E0B" }}>{book.stock}</strong></span>
           </div>
-
-          <h1 style={{ fontFamily: "'Playfair Display', 'Noto Serif', serif", fontSize: 32, fontWeight: 900, color: "#F9FAFB", marginBottom: 20, lineHeight: 1.2 }}>
+          <h1 style={{ fontFamily: "'Playfair Display','Noto Serif',serif", fontSize: 32, fontWeight: 900, color: "#F9FAFB", marginBottom: 20, lineHeight: 1.2 }}>
             {book.title}
           </h1>
-
           <div style={{ background: "#111827", borderRadius: 8, padding: "20px 24px", marginBottom: 16, border: "1px solid #1f2937" }}>
-            <div style={{ fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace", fontSize: 11, color: "#F59E0B", marginBottom: 8, letterSpacing: 2 }}>GIỚI THIỆU</div>
+            <div style={{ fontFamily: "'Nunito Sans','Noto Sans Mono',monospace", fontSize: 11, color: "#F59E0B", marginBottom: 8, letterSpacing: 2 }}>GIỚI THIỆU</div>
             <p style={{ color: "#d1cbc3", lineHeight: 1.8, fontSize: 15 }}>{book.description}</p>
           </div>
-
           <div style={{ background: "#111827", borderRadius: 8, padding: "20px 24px", marginBottom: 28, border: "1px solid #1f2937" }}>
-            <div style={{ fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace", fontSize: 11, color: "#F59E0B", marginBottom: 8, letterSpacing: 2 }}>MÔ TẢ NGẮN</div>
+            <div style={{ fontFamily: "'Nunito Sans','Noto Sans Mono',monospace", fontSize: 11, color: "#F59E0B", marginBottom: 8, letterSpacing: 2 }}>MÔ TẢ NGẮN</div>
             <p style={{ color: "#d1cbc3", lineHeight: 1.8, fontSize: 14 }}>
               {book.category} • {book.author} — một tác phẩm đáng đọc trong bộ sưu tập của bạn.
             </p>
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
             <div>
               <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>Giá bán</div>
-              <div style={{ fontFamily: "'Nunito Sans', monospace", fontSize: 28, fontWeight: 700, color: "#F59E0B" }}>
+              <div style={{ fontFamily: "'Nunito Sans',monospace", fontSize: 28, fontWeight: 700, color: "#F59E0B" }}>
                 {formatPrice(book.price)}
               </div>
             </div>
@@ -350,36 +505,55 @@ function ProductPage({ book, navigate, addToCart }) {
 }
 
 // ─── SIGN IN ──────────────────────────────────────────────────────────────────
-function SignIn({ navigate, users, setCurrentUser, showToast }) {
-  const [form, setForm] = useState({ login: "", password: "" });
-  const [err, setErr] = useState("");
+function SignIn({ navigate, setCurrentUser, showToast }) {
+  const [form, setForm]     = useState({ login: "", password: "" });
+  const [err, setErr]       = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = () => {
-    const user = users.find(u => (u.loginname === form.login || u.email === form.login) && u.password === form.password);
-    if (user) { setCurrentUser(user); showToast(`Chào mừng, ${user.name}!`); navigate("home"); }
-    else { setErr("Sai tên đăng nhập hoặc mật khẩu"); }
+  const handleSubmit = async () => {
+    if (!form.login || !form.password) { setErr("Vui lòng nhập đầy đủ thông tin"); return; }
+    setLoading(true);
+    setErr("");
+    try {
+      // Backend login field is 'loginname', not 'email'
+      const data = await apiLogin(form.login, form.password);
+      // data = { token, user: { id, name, role } }
+      setCurrentUser({ ...data.user, token: data.token });
+      showToast(`Chào mừng, ${data.user.name}!`);
+      navigate("home");
+    } catch (err) {
+      setErr(err.message || "Sai tên đăng nhập hoặc mật khẩu");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div style={{ minHeight: "calc(100vh - 60px)", display: "flex", alignItems: "center", justifyContent: "center", animation: "fadeUp 0.4s ease" }}>
       <div style={{ background: "#1F2937", border: "1px solid #1f2937", borderRadius: 12, padding: 48, width: "100%", maxWidth: 480 }}>
         <span onClick={() => navigate("home")} style={{ color: "#F59E0B", cursor: "pointer", fontSize: 14 }}>← Quay lại</span>
-        <h2 style={{ fontFamily: "'Playfair Display', 'Noto Serif', serif", fontSize: 28, margin: "24px 0 32px", textAlign: "center", letterSpacing: 4 }}>ĐĂNG NHẬP</h2>
+        <h2 style={{ fontFamily: "'Playfair Display','Noto Serif',serif", fontSize: 28, margin: "24px 0 32px", textAlign: "center", letterSpacing: 4 }}>ĐĂNG NHẬP</h2>
         {err && <div style={{ background: "#EF444411", color: "#EF4444", padding: "10px 14px", borderRadius: 6, marginBottom: 16, fontSize: 13 }}>{err}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <input placeholder="Email đăng nhập" value={form.login} onChange={e => setForm({ ...form, login: e.target.value })} style={{ width: "100%" }} />
-          <input type="password" placeholder="Mật khẩu" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
-            style={{ width: "100%" }} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+          <input
+            placeholder="Tên đăng nhập" value={form.login}
+            onChange={e => setForm({ ...form, login: e.target.value })}
+            style={{ width: "100%" }}
+          />
+          <input
+            type="password" placeholder="Mật khẩu" value={form.password}
+            onChange={e => setForm({ ...form, password: e.target.value })}
+            style={{ width: "100%" }}
+            onKeyDown={e => e.key === "Enter" && handleSubmit()}
+          />
           <div style={{ fontSize: 13, color: "#6b7280" }}>
-            <span style={{ color: "#F59E0B", cursor: "pointer" }}>Quên mật khẩu</span>
-            {"  ·  "}
             <span>Chưa có tài khoản? </span>
             <span style={{ color: "#F59E0B", cursor: "pointer" }} onClick={() => navigate("signup")}>Đăng ký</span>
           </div>
-          <button className="btn-primary" onClick={handleSubmit} style={{ width: "100%", padding: "13px 0", fontSize: 14, marginTop: 8 }}>Đăng nhập</button>
-          <div style={{ fontSize: 12, color: "#6b7280", textAlign: "center" }}>
-            Thử: nguyenvana / 123@
-          </div>
+          <button className="btn-primary" onClick={handleSubmit} disabled={loading}
+            style={{ width: "100%", padding: "13px 0", fontSize: 14, marginTop: 8, opacity: loading ? 0.6 : 1 }}>
+            {loading ? "Đang đăng nhập..." : "Đăng nhập"}
+          </button>
         </div>
       </div>
     </div>
@@ -388,35 +562,49 @@ function SignIn({ navigate, users, setCurrentUser, showToast }) {
 
 // ─── SIGN UP ──────────────────────────────────────────────────────────────────
 function SignUp({ navigate, showToast }) {
-  const [form, setForm] = useState({ login: "", password: "", confirm: "", email: "" });
-  const [err, setErr] = useState("");
+  const [form, setForm]     = useState({ login: "", password: "", confirm: "", name: "" });
+  const [err, setErr]       = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = () => {
-    if (!form.login || !form.password || !form.email) { setErr("Vui lòng điền đầy đủ thông tin"); return; }
-    if (form.password !== form.confirm) { setErr("Mật khẩu xác nhận không khớp"); return; }
-    showToast("Đăng ký thành công! Hãy đăng nhập");
-    navigate("signin");
+  const handleSubmit = async () => {
+    if (!form.login || !form.password || !form.name) { setErr("Vui lòng điền đầy đủ thông tin"); return; }
+    if (form.password !== form.confirm)              { setErr("Mật khẩu xác nhận không khớp");  return; }
+    setLoading(true);
+    setErr("");
+    try {
+      await apiRegister(form.login, form.password, form.name);
+      showToast("Đăng ký thành công! Hãy đăng nhập");
+      navigate("signin");
+    } catch (err) {
+      setErr(err.message || "Đăng ký thất bại");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div style={{ minHeight: "calc(100vh - 60px)", display: "flex", alignItems: "center", justifyContent: "center", animation: "fadeUp 0.4s ease" }}>
       <div style={{ background: "#1F2937", border: "1px solid #1f2937", borderRadius: 12, padding: 48, width: "100%", maxWidth: 480 }}>
         <span onClick={() => navigate("home")} style={{ color: "#F59E0B", cursor: "pointer", fontSize: 14 }}>← Quay lại</span>
-        <h2 style={{ fontFamily: "'Playfair Display', 'Noto Serif', serif", fontSize: 28, margin: "24px 0 32px", textAlign: "center", letterSpacing: 4 }}>ĐĂNG KÝ</h2>
+        <h2 style={{ fontFamily: "'Playfair Display','Noto Serif',serif", fontSize: 28, margin: "24px 0 32px", textAlign: "center", letterSpacing: 4 }}>ĐĂNG KÝ</h2>
         {err && <div style={{ background: "#EF444411", color: "#EF4444", padding: "10px 14px", borderRadius: 6, marginBottom: 16, fontSize: 13 }}>{err}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {[
-            { key: "login", placeholder: "Tên truy cập" },
-            { key: "password", placeholder: "Mật khẩu", type: "password" },
-            { key: "confirm", placeholder: "Nhập lại mật khẩu", type: "password" },
-            { key: "email", placeholder: "Email" },
+            { key: "name",     placeholder: "Họ và tên" },
+            { key: "login",    placeholder: "Tên đăng nhập" },
+            { key: "password", placeholder: "Mật khẩu",           type: "password" },
+            { key: "confirm",  placeholder: "Nhập lại mật khẩu",  type: "password" },
           ].map(f => (
             <input key={f.key} type={f.type || "text"} placeholder={f.placeholder}
               value={form[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })}
-              style={{ width: "100%" }} />
+              style={{ width: "100%" }}
+            />
           ))}
           <div style={{ display: "flex", gap: 12 }}>
-            <button className="btn-primary" onClick={handleSubmit} style={{ flex: 1, padding: "13px 0", fontSize: 14 }}>Đăng ký ngay</button>
+            <button className="btn-primary" onClick={handleSubmit} disabled={loading}
+              style={{ flex: 1, padding: "13px 0", fontSize: 14, opacity: loading ? 0.6 : 1 }}>
+              {loading ? "Đang đăng ký..." : "Đăng ký ngay"}
+            </button>
             <button className="btn-ghost" onClick={() => navigate("home")} style={{ flex: 1 }}>Hủy</button>
           </div>
         </div>
@@ -426,11 +614,10 @@ function SignUp({ navigate, showToast }) {
 }
 
 // ─── ACCOUNT PAGE ─────────────────────────────────────────────────────────────
-function AccountPage({ currentUser, navigate, orders, showToast }) {
+function AccountPage({ currentUser, navigate, orders, deleteOrder, showToast, token }) {
   const [form, setForm] = useState({
-    name: currentUser?.name || "",
-    email: currentUser?.email || "",
-    phone: "09********",
+    name:    currentUser?.name  || "",
+    phone:   "",
     address: "",
     newPass: "",
     confirm: "",
@@ -445,8 +632,6 @@ function AccountPage({ currentUser, navigate, orders, showToast }) {
     );
   }
 
-  const myOrders = orders.filter(o => o.userId === currentUser.id);
-
   return (
     <div style={{ maxWidth: 800, margin: "32px auto", padding: "0 24px", animation: "fadeUp 0.4s ease" }}>
       <span onClick={() => navigate("home")} style={{ color: "#F59E0B", cursor: "pointer", fontSize: 14 }}>← Quay lại</span>
@@ -454,32 +639,33 @@ function AccountPage({ currentUser, navigate, orders, showToast }) {
       <div style={{ background: "#1F2937", border: "1px solid #1f2937", borderRadius: 12, padding: 40, marginTop: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 36 }}>
           <div style={{ width: 64, height: 64, background: "#F59E0B33", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, border: "2px solid #F59E0B" }}>
+            👤
           </div>
           <div>
-            <h2 style={{ fontFamily: "'Playfair Display', 'Noto Serif', serif", fontSize: 22, margin: 0 }}>Tài khoản người dùng</h2>
-            <div style={{ color: "#6b7280", fontSize: 13, marginTop: 4 }}>ID: {currentUser.id}</div>
+            <h2 style={{ fontFamily: "'Playfair Display','Noto Serif',serif", fontSize: 22, margin: 0 }}>Tài khoản người dùng</h2>
+            <div style={{ color: "#6b7280", fontSize: 13, marginTop: 4 }}>
+              ID: {currentUser.id} &nbsp;·&nbsp; Role: {currentUser.role === 1 ? "Admin" : "Khách hàng"}
+            </div>
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           {[
-            { label: "Tên tài khoản", key: "name" },
-            { label: "Email", key: "email" },
-            { label: "Họ và tên", key: "name" },
-            { label: "Số điện thoại", key: "phone" },
-            { label: "Địa chỉ", key: "address" },
+            { label: "Tên hiển thị", key: "name"    },
+            { label: "Số điện thoại", key: "phone"  },
+            { label: "Địa chỉ",       key: "address" },
           ].map(f => (
             <div key={f.label} style={{ gridColumn: f.label === "Địa chỉ" ? "1 / -1" : "auto" }}>
-              <label style={{ fontSize: 12, color: "#B4BCC4", display: "block", marginBottom: 6, fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace" }}>{f.label}</label>
+              <label style={{ fontSize: 12, color: "#B4BCC4", display: "block", marginBottom: 6, fontFamily: "'Nunito Sans','Noto Sans Mono',monospace" }}>{f.label}</label>
               <input value={form[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} style={{ width: "100%" }} />
             </div>
           ))}
           <div>
-            <label style={{ fontSize: 12, color: "#B4BCC4", display: "block", marginBottom: 6, fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace" }}>Mật khẩu mới</label>
+            <label style={{ fontSize: 12, color: "#B4BCC4", display: "block", marginBottom: 6, fontFamily: "'Nunito Sans','Noto Sans Mono',monospace" }}>Mật khẩu mới</label>
             <input type="password" value={form.newPass} onChange={e => setForm({ ...form, newPass: e.target.value })} style={{ width: "100%" }} />
           </div>
           <div>
-            <label style={{ fontSize: 12, color: "#B4BCC4", display: "block", marginBottom: 6, fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace" }}>Xác nhận lại</label>
+            <label style={{ fontSize: 12, color: "#B4BCC4", display: "block", marginBottom: 6, fontFamily: "'Nunito Sans','Noto Sans Mono',monospace" }}>Xác nhận lại</label>
             <input type="password" value={form.confirm} onChange={e => setForm({ ...form, confirm: e.target.value })} style={{ width: "100%" }} />
           </div>
         </div>
@@ -491,35 +677,41 @@ function AccountPage({ currentUser, navigate, orders, showToast }) {
       </div>
 
       {/* Order History */}
-      {myOrders.length > 0 && (
-        <div style={{ background: "#1F2937", border: "1px solid #1f2937", borderRadius: 12, padding: 32, marginTop: 20 }}>
-          <h3 style={{ fontFamily: "'Playfair Display', 'Noto Serif', serif", margin: "0 0 20px", fontSize: 18 }}>Lịch sử đơn hàng</h3>
-          {myOrders.map(o => (
-            <div key={o._id} style={{ background: "#111827", borderRadius: 8, padding: 16, marginBottom: 12, border: "1px solid #1f2937" }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace", fontSize: 12, color: "#F59E0B" }}>Đơn #{o._id}</span>
-                <span style={{ fontSize: 12, color: "#6b7280" }}>{o.ngay_mua}</span>
+      <div style={{ background: "#1F2937", border: "1px solid #1f2937", borderRadius: 12, padding: 32, marginTop: 20 }}>
+        <h3 style={{ fontFamily: "'Playfair Display','Noto Serif',serif", margin: "0 0 20px", fontSize: 18 }}>Lịch sử đơn hàng</h3>
+        {orders.length === 0 ? (
+          <p style={{ color: "#6b7280", fontSize: 14 }}>Chưa có đơn hàng nào</p>
+        ) : (
+          orders.map(o => (
+            <div key={o._id} style={{ background: "#111827", borderRadius: 8, padding: 16, marginBottom: 12, border: "1px solid #1f2937", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontFamily: "'Nunito Sans','Noto Sans Mono',monospace", fontSize: 12, color: "#F59E0B" }}>Đơn #{o._id?.slice(-6) || o._id}</div>
+                <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{o.ngay_mua}</div>
+                <div style={{ marginTop: 6, color: "#F59E0B", fontWeight: 700 }}>{formatPrice(o.tong_tien)}</div>
               </div>
-              <div style={{ marginTop: 8, color: "#F59E0B", fontWeight: 700 }}>{formatPrice(o.tong_tien)}</div>
+              <button onClick={() => deleteOrder(o._id)}
+                style={{ background: "none", border: "1px solid #374151", color: "#EF4444", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontSize: 12 }}>
+                Xóa
+              </button>
             </div>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
     </div>
   );
 }
 
 // ─── CART PAGE ────────────────────────────────────────────────────────────────
 function CartPage({ cart, updateQty, removeFromCart, checkout, navigate, currentUser }) {
-  const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
-  const vat = Math.round(subtotal * 0.08);
-  const total = subtotal + vat;
+  const subtotal = cart.reduce((s, i) => s + (i.price || 0) * (i.quantity || 0), 0);
+  const vat      = Math.round(subtotal * 0.08);
+  const total    = subtotal + vat;
 
   return (
     <div className="cart-page">
       <div className="cart-header">
         <span onClick={() => navigate("home")} style={{ color: "#F59E0B", cursor: "pointer", fontSize: 14 }}>← Quay lại</span>
-        <h2 style={{ fontFamily: "'Playfair Display', 'Noto Serif', serif", fontSize: 24, margin: 0 }}>Giỏ hàng</h2>
+        <h2 style={{ fontFamily: "'Playfair Display','Noto Serif',serif", fontSize: 24, margin: 0 }}>Giỏ hàng</h2>
         <div />
       </div>
 
@@ -535,26 +727,24 @@ function CartPage({ cart, updateQty, removeFromCart, checkout, navigate, current
             {cart.map(item => (
               <div key={item.book_id} className="cart-item">
                 <BookCover book={item} size="sm" />
-                
+
                 <div className="cart-item-info">
-                  <div className="cart-item-title">{item.title}</div>
+                  <div className="cart-item-title">{item.title || item.book_id}</div>
                   <div style={{ fontSize: 13, color: "#D1D5DB", marginBottom: 2 }}>{item.author}</div>
                   <div className="cart-item-price">
-                    {formatPrice(item.price)} <span className="multiply">×</span> {item.qty}
+                    {formatPrice(item.price)} <span className="multiply">×</span> {item.quantity}
                   </div>
                 </div>
 
                 <div className="cart-item-actions">
                   <div className="qty-control">
-                    <button onClick={() => updateQty(item.book_id, -1)} style={{ background: "none", border: "none", color: "#111827", cursor: "pointer", padding: "4px 8px", fontSize: 16, fontWeight: "bold" }}>−</button>
-                    <span style={{ fontSize: 13, padding: "4px 8px", minWidth: 24, textAlign: "center", color: "#111827", fontWeight: 600 }}>{item.qty}</span>
-                    <button onClick={() => updateQty(item.book_id, 1)} style={{ background: "none", border: "none", color: "#111827", cursor: "pointer", padding: "4px 8px", fontSize: 16, fontWeight: "bold" }}>+</button>
+                    <button onClick={() => updateQty(item.book_id, -1)}
+                      style={{ background: "none", border: "none", color: "#111827", cursor: "pointer", padding: "4px 8px", fontSize: 16, fontWeight: "bold" }}>−</button>
+                    <span style={{ fontSize: 13, padding: "4px 8px", minWidth: 24, textAlign: "center", color: "#111827", fontWeight: 600 }}>{item.quantity}</span>
+                    <button onClick={() => updateQty(item.book_id, 1)}
+                      style={{ background: "none", border: "none", color: "#111827", cursor: "pointer", padding: "4px 8px", fontSize: 16, fontWeight: "bold" }}>+</button>
                   </div>
-
-                  <div className="item-total">
-                    {formatPrice(item.price * item.qty)}
-                  </div>
-
+                  <div className="item-total">{formatPrice((item.price || 0) * (item.quantity || 0))}</div>
                   <button onClick={() => removeFromCart(item.book_id)} className="remove-button">🗑</button>
                 </div>
               </div>
@@ -574,10 +764,11 @@ function CartPage({ cart, updateQty, removeFromCart, checkout, navigate, current
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24, fontSize: 14 }}>
               <span style={{ fontWeight: 700, color: "#F9FAFB" }}>Tổng thanh toán</span>
-              <span style={{ color: "#F59E0B", fontWeight: 700, fontFamily: "'Nunito Sans', 'Noto Sans Mono', monospace", fontSize: 15 }}>{formatPrice(total)}</span>
+              <span style={{ color: "#F59E0B", fontWeight: 700, fontFamily: "'Nunito Sans','Noto Sans Mono',monospace", fontSize: 15 }}>{formatPrice(total)}</span>
             </div>
-            <button className="btn-primary" onClick={checkout} style={{ width: "100%", padding: "12px 0", fontSize: 14 }}>
-              {currentUser ? "Thanh toán" : "Đăng nhập"}
+            <button className="btn-primary" onClick={checkout}
+              style={{ width: "100%", padding: "12px 0", fontSize: 14 }}>
+              {currentUser ? "Thanh toán" : "Đăng nhập để thanh toán"}
             </button>
           </div>
         </div>
@@ -592,29 +783,28 @@ function Footer() {
     <footer className="footer-bar">
       <div className="footer-inner">
         <div className="footer-columns">
-        {[
-          { title: "Dịch vụ", items: ["Giao hàng tận nơi", "Thanh toán online", "Đổi trả 30 ngày"] },
-          { title: "Về chúng tôi", items: ["Giới thiệu", "Tuyển dụng", "Tin tức"] },
-          { title: "Trợ giúp", items: ["FAQ", "Liên hệ", "Hướng dẫn mua"] },
-          { title: "Mua hàng", items: ["Tất cả sách", "Khuyến mãi", "Combo"] },
-        ].map(col => (
-          <div key={col.title} className="footer-column">
-            <div className="footer-column-title">{col.title}</div>
-            {col.items.map(i => <div key={i} className="footer-link">{i}</div>)}
+          {[
+            { title: "Dịch vụ",     items: ["Giao hàng tận nơi", "Thanh toán online", "Đổi trả 30 ngày"] },
+            { title: "Về chúng tôi", items: ["Giới thiệu", "Tuyển dụng", "Tin tức"] },
+            { title: "Trợ giúp",    items: ["FAQ", "Liên hệ", "Hướng dẫn mua"] },
+            { title: "Mua hàng",    items: ["Tất cả sách", "Khuyến mãi", "Combo"] },
+          ].map(col => (
+            <div key={col.title} className="footer-column">
+              <div className="footer-column-title">{col.title}</div>
+              {col.items.map(i => <div key={i} className="footer-link">{i}</div>)}
+            </div>
+          ))}
+          <div className="footer-column footer-subscribe">
+            <div className="footer-column-title">Tìm chúng tôi</div>
+            <input placeholder="Nhập địa chỉ email" className="footer-input" />
           </div>
-        ))}
-        <div className="footer-column footer-subscribe">
-          <div className="footer-column-title">Tìm chúng tôi</div>
-          <input placeholder="Nhập địa chỉ" className="footer-input" />
+        </div>
+        <div className="footer-legal">
+          {["Điều khoản sử dụng", "Bản quyền", "Quyền riêng tư", "Trợ năng", "Điều khoản Cookie"].map(t => (
+            <span key={t} style={{ color: "#4b5563", fontSize: 12, cursor: "pointer" }}>{t}</span>
+          ))}
         </div>
       </div>
-      <div className="footer-legal">
-        {["Điều khoản sử dụng", "Bản quyền", "Quyền riêng tư", "Trợ năng", "Điều khoản Cookie"].map(t => (
-          <span key={t} style={{ color: "#4b5563", fontSize: 12, cursor: "pointer" }}>{t}</span>
-        ))}
-      </div>
-    </div>
     </footer>
   );
 }
-
