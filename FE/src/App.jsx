@@ -134,8 +134,10 @@ export default function App() {
       const data = await apiAddToCart(book.book_id, 1, token);
       setCart(data.detail?.chi_tiet || []);
       showToast(`Đã thêm "${book.title}" vào giỏ hàng`);
+      // Refresh book list so stock number updates live
+      fetchBooks();
     } catch (err) {
-      showToast("Lỗi thêm vào giỏ: " + err.message, "error");
+      showToast(err.message, "error");
     }
   };
 
@@ -149,8 +151,10 @@ export default function App() {
         data = await apiDecreaseQty(book_id, token);
       }
       setCart(data.order?.chi_tiet || []);
+      // Refresh books so stock number updates live
+      fetchBooks();
     } catch (err) {
-      showToast("Lỗi cập nhật số lượng: " + err.message, "error");
+      showToast(err.message, "error");
     }
   };
 
@@ -160,8 +164,9 @@ export default function App() {
       const data = await apiRemoveFromCart(book_id, token);
       setCart(data.detail?.chi_tiet || []);
       showToast("Đã xóa sản phẩm khỏi giỏ hàng");
+      fetchBooks();
     } catch (err) {
-      showToast("Lỗi xóa sản phẩm: " + err.message, "error");
+      showToast(err.message, "error");
     }
   };
 
@@ -173,9 +178,9 @@ export default function App() {
     const total = subtotal + vat;
     try {
       await apiCreateOrder(total, token);
-      // Clear cart by removing each item (or refetch)
       setCart([]);
       await loadOrders(token);
+      fetchBooks(); // Stock already decremented at add-to-cart, just refresh display
       showToast("Đặt hàng thành công!");
       navigate("home");
     } catch (err) {
@@ -205,7 +210,15 @@ export default function App() {
   // Enrich cart items with book metadata for display
   const enrichedCart = cart.map(item => {
     const bookInfo = books.find(b => b.book_id === item.book_id) || {};
-    return { ...item, title: bookInfo.title || item.book_id, author: bookInfo.author || "" };
+    return {
+      ...item,
+      title: bookInfo.title || item.book_id,
+      author: bookInfo.author || "",
+      // stockAvailable = what's still in the warehouse (not yet in any cart)
+      // The + item.quantity adds back what this user has reserved, giving the
+      // real remaining stock if they were to increase their own qty further.
+      stockAvailable: (bookInfo.stock || 0) + item.quantity,
+    };
   });
 
   return (
@@ -433,14 +446,23 @@ function BookSection({ title, books, navigate, addToCart }) {
 }
 
 function BookCard({ book, navigate, addToCart }) {
+  const outOfStock = book.stock <= 0;
   return (
     <div className="book-card" style={{
       background: "#1F2937", border: "1px solid #374151", borderRadius: 10,
       padding: 16, minWidth: 160, maxWidth: 160, cursor: "pointer",
       boxShadow: "0 4px 16px #0003", display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center", gap: 8,
-      position: "relative", overflow: "hidden"
+      position: "relative", overflow: "hidden",
+      opacity: outOfStock ? 0.6 : 1
     }}>
+      {outOfStock && (
+        <div style={{
+          position: "absolute", top: 10, right: 10,
+          background: "#EF4444", color: "#fff", fontSize: 9,
+          fontWeight: 700, padding: "3px 7px", borderRadius: 4, letterSpacing: 1
+        }}>HẾT HÀNG</div>
+      )}
       <div onClick={() => navigate("product", book)} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
         <BookCover book={book} size="md" />
         <div style={{ marginTop: 12, fontSize: 13, fontWeight: 600, color: "#F9FAFB", lineHeight: 1.4, height: 38, overflow: "hidden", textAlign: "center", width: "100%" }}>
@@ -451,9 +473,12 @@ function BookCard({ book, navigate, addToCart }) {
           {formatPrice(book.price)}
         </div>
       </div>
-      <button className="btn-primary" onClick={e => { e.stopPropagation(); addToCart(book); }}
-        style={{ width: "100%", fontSize: 11, padding: "8px 0" }}>
-        + Giỏ hàng
+      <button
+        className={outOfStock ? "btn-ghost" : "btn-primary"}
+        onClick={e => { e.stopPropagation(); if (!outOfStock) addToCart(book); }}
+        disabled={outOfStock}
+        style={{ width: "100%", fontSize: 11, padding: "8px 0", cursor: outOfStock ? "not-allowed" : "pointer" }}>
+        {outOfStock ? "Hết hàng" : "+ Giỏ hàng"}
       </button>
     </div>
   );
@@ -461,6 +486,7 @@ function BookCard({ book, navigate, addToCart }) {
 
 // ─── PRODUCT PAGE ─────────────────────────────────────────────────────────────
 function ProductPage({ book, navigate, addToCart }) {
+  const outOfStock = book.stock <= 0;
   return (
     <div style={{ maxWidth: 1100, margin: "32px auto", padding: "0 24px", animation: "fadeUp 0.4s ease" }}>
       <span onClick={() => navigate("home")} style={{ color: "#F59E0B", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", gap: 6, marginBottom: 32 }}>
@@ -472,7 +498,11 @@ function ProductPage({ book, navigate, addToCart }) {
           <div style={{ display: "flex", gap: 32, marginBottom: 24, color: "#B4BCC4", fontSize: 13 }}>
             <span>Tác giả: <strong style={{ color: "#F9FAFB" }}>{book.author}</strong></span>
             <span>Thể loại: <strong style={{ color: "#F9FAFB" }}>{book.category}</strong></span>
-            <span>Còn: <strong style={{ color: "#F59E0B" }}>{book.stock}</strong></span>
+            <span>Còn:{" "}
+              <strong style={{ color: outOfStock ? "#EF4444" : "#F59E0B" }}>
+                {outOfStock ? "Hết hàng" : book.stock}
+              </strong>
+            </span>
           </div>
           <h1 style={{ fontFamily: "'Playfair Display','Noto Serif',serif", fontSize: 32, fontWeight: 900, color: "#F9FAFB", marginBottom: 20, lineHeight: 1.2 }}>
             {book.title}
@@ -494,8 +524,12 @@ function ProductPage({ book, navigate, addToCart }) {
                 {formatPrice(book.price)}
               </div>
             </div>
-            <button className="btn-primary" onClick={() => addToCart(book)} style={{ fontSize: 15, padding: "14px 36px", flex: 1 }}>
-              Thêm vào giỏ hàng
+            <button
+              className={outOfStock ? "btn-ghost" : "btn-primary"}
+              onClick={() => { if (!outOfStock) addToCart(book); }}
+              disabled={outOfStock}
+              style={{ fontSize: 15, padding: "14px 36px", flex: 1, cursor: outOfStock ? "not-allowed" : "pointer" }}>
+              {outOfStock ? "Hết hàng" : "Thêm vào giỏ hàng"}
             </button>
           </div>
         </div>
@@ -742,7 +776,13 @@ function CartPage({ cart, updateQty, removeFromCart, checkout, navigate, current
                       style={{ background: "none", border: "none", color: "#111827", cursor: "pointer", padding: "4px 8px", fontSize: 16, fontWeight: "bold" }}>−</button>
                     <span style={{ fontSize: 13, padding: "4px 8px", minWidth: 24, textAlign: "center", color: "#111827", fontWeight: 600 }}>{item.quantity}</span>
                     <button onClick={() => updateQty(item.book_id, 1)}
-                      style={{ background: "none", border: "none", color: "#111827", cursor: "pointer", padding: "4px 8px", fontSize: 16, fontWeight: "bold" }}>+</button>
+                      disabled={item.quantity >= item.stockAvailable}
+                      style={{
+                        background: "none", border: "none", color: "#111827",
+                        cursor: item.quantity >= item.stockAvailable ? "not-allowed" : "pointer",
+                        padding: "4px 8px", fontSize: 16, fontWeight: "bold",
+                        opacity: item.quantity >= item.stockAvailable ? 0.3 : 1
+                      }}>+</button>
                   </div>
                   <div className="item-total">{formatPrice((item.price || 0) * (item.quantity || 0))}</div>
                   <button onClick={() => removeFromCart(item.book_id)} className="remove-button">🗑</button>

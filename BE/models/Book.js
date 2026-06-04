@@ -11,4 +11,4 @@ const bookSchema = new mongoose.Schema({
   image: { type: String, default: '' }
 })
 
-module.exports = mongoose.model('Books', bookSchema)
+module.exports = mongoose.model('Books', bookSchema, 'Books')

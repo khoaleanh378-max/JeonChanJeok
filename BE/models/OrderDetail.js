@@ -13,4 +13,4 @@ const orderDetailSchema = new mongoose.Schema({
   ]
 })
 
-module.exports = mongoose.model('OrderDetails', orderDetailSchema)
+module.exports = mongoose.model('OrderDetails', orderDetailSchema, 'OrderDetails')

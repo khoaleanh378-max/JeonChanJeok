@@ -6,4 +6,4 @@ const orderSchema = new mongoose.Schema({
   tong_tien: { type: Number, required: true }
 })
 
-module.exports = mongoose.model('Orders', orderSchema)
+module.exports = mongoose.model('Orders', orderSchema, 'Orders')

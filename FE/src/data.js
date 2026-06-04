@@ -1,7 +1,3 @@
-// data.js
-// BOOKS_DATA and USERS_DATA have been removed — data now comes from the backend API.
-// Only UI constants remain here.
-
 export const CATEGORIES = [
   "Tất cả", "Tiểu thuyết", "Truyện tranh",
   "Văn học cổ điển", "Văn học hiện thực", "Truyện dài"

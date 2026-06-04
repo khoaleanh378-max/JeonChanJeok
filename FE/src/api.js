@@ -1,10 +1,3 @@
-// ============================================================
-// api.js — Centralized API service layer
-// All backend calls go through here. Base URL is /api which
-// Vite's devServer.proxy rewrites to http://localhost:8080.
-// In production, deploy backend separately and set VITE_API_URL.
-// ============================================================
-
 const BASE = import.meta.env.VITE_API_URL || "/api";
 
 // ── Helper ──────────────────────────────────────────────────

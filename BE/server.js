@@ -5,9 +5,6 @@ require('dotenv').config()
 
 const app = express()
 
-// ============================================
-// CẤU HÌNH CORS - KẾT NỐI VỚI REACT
-// ============================================
 // Đang để cors() cho phép tất cả - tiện khi dev
 // Sau này nếu muốn giới hạn thì sửa lại thành:
 // app.use(cors({ origin: 'http://IP_MÁY_BẠN_BÈ:3000' }))
@@ -20,6 +17,7 @@ console.log("URI:", process.env.MONGO_URI)
 mongoose.connect(process.env.MONGO_URI, { family: 4 })
 .then(() => {
     console.log("Kết nối MongoDB thành công");
+    console.log("Connected DB:", mongoose.connection.name);
 })
 .catch((err) => {
     console.error("Lỗi kết nối MongoDB:", err);

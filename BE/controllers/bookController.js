@@ -3,9 +3,15 @@ const Book = require('../models/Book');
 // Lấy tất cả sách đổ ra trang chủ
 const getAllBooks = async (req, res) => {
   try {
+    console.log("Collection:", Book.collection.name);
+
     const books = await Book.find();
+
+    console.log("Books found:", books.length);
+
     res.json(books);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -40,7 +46,7 @@ const searchBooks = async (req, res) => {
   }
 };
 
-// Lọc sách dựa theo Thể loại (Category) từ thanh menu điều hướng
+// Lọc sách dựa theo Thể loại (Category) từ menu điều hướng
 const getBooksByCategory = async (req, res) => {
   try {
     const books = await Book.find({ category: req.params.category });
